@@ -16,41 +16,72 @@ export function createServer(): McpServer {
 
   server.tool(
     'list_plugins',
-    'List all available @akinon/pz-* plugins from npm with latest versions, grouped by category',
+    'List all available @akinon/pz-* plugins from npm, grouped by category. Supports dist-tag filtering (latest, rc, beta, etc.)',
     {
       category: z
         .enum(['payment', 'bnpl', 'quick-checkout', 'shopping', 'business', 'utility', 'all'])
         .optional()
         .describe('Filter by category. Omit or use "all" to list every plugin.'),
+      tag: z
+        .string()
+        .optional()
+        .describe('npm dist-tag to show versions for, e.g. "rc", "beta", "next". Defaults to "latest".'),
     },
-    async ({ category }) => {
+    async ({ category, tag }) => {
       try {
+        const distTag = tag ?? 'latest';
         let plugins = await registry.listPlugins();
 
         if (category && category !== 'all') {
           plugins = plugins.filter((p) => p.category === category);
         }
 
-        const grouped = new Map<PluginCategory, typeof plugins>();
-        for (const p of plugins) {
+        const pluginDetails = await Promise.allSettled(
+          plugins.map((p) => registry.getPluginDetail(p.name))
+        );
+
+        const enriched = plugins.map((p, i) => {
+          const result = pluginDetails[i];
+          const tagVersion =
+            result.status === 'fulfilled' ? result.value.distTags[distTag] : undefined;
+          return { ...p, tagVersion };
+        });
+
+        const grouped = new Map<PluginCategory, typeof enriched>();
+        for (const p of enriched) {
           const list = grouped.get(p.category) ?? [];
           list.push(p);
           grouped.set(p.category, list);
         }
 
+        const showTag = distTag !== 'latest';
         const lines: string[] = [];
         for (const [cat, items] of grouped) {
           const label = CATEGORY_LABELS[cat] ?? cat;
           lines.push(`## ${label}`);
-          lines.push('| Plugin | Version | Description |');
-          lines.push('|--------|---------|-------------|');
-          for (const p of items) {
-            lines.push(`| ${p.name} | ${p.latestVersion} | ${p.description} |`);
+          if (showTag) {
+            lines.push(`| Plugin | latest | ${distTag} | Description |`);
+            lines.push('|--------|--------|' + '-'.repeat(distTag.length + 2) + '|-------------|');
+            for (const p of items) {
+              lines.push(
+                `| ${p.name} | ${p.latestVersion} | ${p.tagVersion ?? '-'} | ${p.description} |`
+              );
+            }
+          } else {
+            lines.push('| Plugin | Version | Description |');
+            lines.push('|--------|---------|-------------|');
+            for (const p of items) {
+              lines.push(`| ${p.name} | ${p.latestVersion} | ${p.description} |`);
+            }
           }
           lines.push('');
         }
 
-        lines.push(`**Total:** ${plugins.length} plugins found`);
+        lines.push(`**Total:** ${enriched.length} plugins found`);
+        if (showTag) {
+          const withTag = enriched.filter((p) => p.tagVersion).length;
+          lines.push(`**${distTag} tag:** ${withTag} plugins have a ${distTag} release`);
+        }
 
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (error) {
@@ -61,7 +92,7 @@ export function createServer(): McpServer {
 
   server.tool(
     'get_plugin_info',
-    'Get detailed information about a specific @akinon/pz-* plugin: versions, dependencies, peer dependencies',
+    'Get detailed information about a specific @akinon/pz-* plugin: dist-tags (latest, rc, beta), versions, dependencies, peer dependencies',
     {
       name: z
         .string()
@@ -78,16 +109,26 @@ export function createServer(): McpServer {
 
         const deps = Object.entries(detail.dependencies);
         const peerDeps = Object.entries(detail.peerDependencies);
+        const distTags = Object.entries(detail.distTags);
 
         const lines = [
           `# ${detail.packageName}`,
           '',
-          `**Latest:** ${detail.latestVersion}`,
           `**Category:** ${CATEGORY_LABELS[detail.category]}`,
           `**Description:** ${detail.description}`,
           detail.lastPublished ? `**Last published:** ${formatDate(detail.lastPublished)}` : '',
           '',
         ];
+
+        if (distTags.length > 0) {
+          lines.push('## Dist Tags');
+          lines.push('| Tag | Version |');
+          lines.push('|-----|---------|');
+          for (const [tag, ver] of distTags) {
+            lines.push(`| **${tag}** | ${ver} |`);
+          }
+          lines.push('');
+        }
 
         if (deps.length > 0) {
           lines.push('## Dependencies');

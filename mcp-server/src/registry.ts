@@ -81,6 +81,7 @@ export class NpmRegistryClient {
       description: latestMeta?.description ?? doc.description ?? '',
       category: this.resolveCategory(shortName),
       lastPublished: doc.time?.[latestTag],
+      distTags: doc['dist-tags'] ?? {},
       allVersions,
       dependencies: latestMeta?.dependencies ?? {},
       peerDependencies: latestMeta?.peerDependencies ?? {},
