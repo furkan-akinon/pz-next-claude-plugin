@@ -1,6 +1,12 @@
 {
   "name": "pz-next",
   "description": "Plugin management for Project Zero Next. Install, configure, and manage pz-* payment and feature plugins.",
-  "version": "1.0.0",
-  "commands": "./skills"
+  "version": "1.1.0",
+  "commands": "./skills",
+  "mcpServers": {
+    "pz-next-registry": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"]
+    }
+  }
 }
