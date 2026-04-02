@@ -83,7 +83,6 @@ export class NpmRegistryClient {
       lastPublished: doc.time?.[latestTag],
       distTags: doc['dist-tags'] ?? {},
       allVersions,
-      dependencies: latestMeta?.dependencies ?? {},
       peerDependencies: latestMeta?.peerDependencies ?? {},
     };
   }

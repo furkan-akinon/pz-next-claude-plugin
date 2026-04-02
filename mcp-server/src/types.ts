@@ -41,7 +41,6 @@ export interface PluginSummary {
 export interface PluginDetail extends PluginSummary {
   distTags: Record<string, string>;
   allVersions: VersionEntry[];
-  dependencies: Record<string, string>;
   peerDependencies: Record<string, string>;
   deprecation?: string;
 }
@@ -58,6 +57,21 @@ export interface UpdateCheckResult {
   latestVersion: string;
   updateAvailable: boolean;
   behindBy: number;
+}
+
+export interface ChangelogCommit {
+  hash: string;
+  date: string;
+  message: string;
+  author: string;
+  ticket?: string;
+}
+
+export interface ChangelogResult {
+  plugin: string;
+  from: string;
+  to: string;
+  commits: ChangelogCommit[];
 }
 
 export type PluginCategory =

@@ -4313,11 +4313,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log3 = "error") {
+    function checkOptions(checkOpts, options, msg, log4 = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log3](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log4](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -21172,7 +21172,6 @@ var NpmRegistryClient = class {
       lastPublished: doc.time?.[latestTag],
       distTags: doc["dist-tags"] ?? {},
       allVersions,
-      dependencies: latestMeta?.dependencies ?? {},
       peerDependencies: latestMeta?.peerDependencies ?? {}
     };
   }
@@ -21298,15 +21297,113 @@ var RegistryError = class extends Error {
   }
 };
 
+// src/bitbucket.ts
+var BITBUCKET_API = "https://api.bitbucket.org/2.0";
+var REPO = "akinonteam/pz-next";
+var TICKET_PATTERN = /\b(ZERO|BRDG)-\d+\b/;
+var SKIP_PATTERNS = [/^Publish.*\[skip ci\]/, /^Merge (main|master|beta|rc) into/];
+var log2 = (level, msg, meta) => {
+  process.stderr.write(JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), level, msg, ...meta }) + "\n");
+};
+var BitbucketClient = class {
+  tagCache;
+  commitCache;
+  constructor() {
+    this.tagCache = new TTLCache(CACHE_TTL_MS);
+    this.commitCache = new TTLCache(CACHE_TTL_MS);
+  }
+  async getChangelog(packageName, fromVersion, toVersion) {
+    const fromTag = `${packageName}@${fromVersion}`;
+    const toTag = `${packageName}@${toVersion}`;
+    const cacheKey = `${fromTag}..${toTag}`;
+    let commits = this.commitCache.get(cacheKey);
+    if (!commits) {
+      commits = await this.fetchCommitsBetween(fromTag, toTag);
+      this.commitCache.set(cacheKey, commits);
+    }
+    return {
+      plugin: packageName,
+      from: fromVersion,
+      to: toVersion,
+      commits
+    };
+  }
+  async getLatestChanges(packageName, version2) {
+    const tags = await this.getVersionTags(packageName);
+    const currentIdx = tags.indexOf(version2);
+    if (currentIdx === -1 || currentIdx >= tags.length - 1) return [];
+    const previousVersion = tags[currentIdx + 1];
+    const result = await this.getChangelog(packageName, previousVersion, version2);
+    return result.commits;
+  }
+  async getVersionTags(packageName) {
+    const cacheKey = `tags:${packageName}`;
+    const cached2 = this.tagCache.get(cacheKey);
+    if (cached2) return cached2;
+    const url = `${BITBUCKET_API}/repositories/${REPO}/refs/tags?q=name+~+"${packageName}"&sort=-name&pagelen=50`;
+    const data = await this.fetchJson(url);
+    const sorted = data.values.map((t) => ({
+      version: t.name.replace(`${packageName}@`, ""),
+      date: t.target.date
+    })).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((t) => t.version);
+    this.tagCache.set(cacheKey, sorted);
+    return sorted;
+  }
+  async fetchCommitsBetween(fromTag, toTag) {
+    const encodedFrom = encodeURIComponent(fromTag);
+    const encodedTo = encodeURIComponent(toTag);
+    const url = `${BITBUCKET_API}/repositories/${REPO}/commits?include=${encodedTo}&exclude=${encodedFrom}&pagelen=30`;
+    try {
+      const data = await this.fetchJson(url);
+      return data.values.map((c) => {
+        const firstLine = c.message.split("\n")[0].trim();
+        const ticketMatch = c.message.match(TICKET_PATTERN);
+        return {
+          hash: c.hash.substring(0, 7),
+          date: c.date.split("T")[0],
+          message: firstLine,
+          author: c.author.user?.display_name ?? c.author.raw.split("<")[0].trim(),
+          ticket: ticketMatch?.[0]
+        };
+      }).filter((c) => !SKIP_PATTERNS.some((p) => p.test(c.message)));
+    } catch (error2) {
+      log2("warn", "Failed to fetch commits from Bitbucket", { fromTag, toTag, error: String(error2) });
+      return [];
+    }
+  }
+  async fetchJson(url, attempt = 1) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        throw new Error(`Bitbucket API returned ${response.status}`);
+      }
+      return await response.json();
+    } catch (error2) {
+      if (attempt <= MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+        return this.fetchJson(url, attempt + 1);
+      }
+      throw error2;
+    }
+  }
+};
+
 // src/server.ts
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 function createServer() {
   const server = new McpServer({
     name: "pz-next-registry",
-    version: "1.0.0"
+    version: "1.5.0"
   });
   const registry2 = new NpmRegistryClient();
+  const bitbucket = new BitbucketClient();
   server.tool(
     "list_plugins",
     "List all available @akinon/pz-* plugins from npm, grouped by category. Supports dist-tag filtering (latest, rc, beta, etc.)",
@@ -21379,7 +21476,6 @@ function createServer() {
         const detail = await registry2.getPluginDetail(name);
         const recentVersions = detail.allVersions.slice(0, 10);
         const versionTable = recentVersions.map((v) => `| ${v.version} | ${formatDate(v.publishedAt)} |`).join("\n");
-        const deps = Object.entries(detail.dependencies);
         const peerDeps = Object.entries(detail.peerDependencies);
         const distTags = Object.entries(detail.distTags);
         const lines = [
@@ -21399,19 +21495,27 @@ function createServer() {
           }
           lines.push("");
         }
-        if (deps.length > 0) {
-          lines.push("## Dependencies");
-          for (const [dep, ver] of deps) {
-            lines.push(`- \`${dep}\`: ${ver}`);
-          }
-          lines.push("");
-        }
         if (peerDeps.length > 0) {
           lines.push("## Peer Dependencies");
           for (const [dep, ver] of peerDeps) {
             lines.push(`- \`${dep}\`: ${ver}`);
           }
           lines.push("");
+        }
+        const latestTag = detail.distTags["latest"];
+        if (latestTag) {
+          const changes = await bitbucket.getLatestChanges(detail.packageName, latestTag);
+          if (changes.length > 0) {
+            lines.push("## Latest Release Changes");
+            for (const c of changes.slice(0, 10)) {
+              const ticket = c.ticket ? ` \`${c.ticket}\`` : "";
+              lines.push(`- ${c.message}${ticket} \u2014 _${c.author}, ${c.date}_`);
+            }
+            if (changes.length > 10) {
+              lines.push(`_...and ${changes.length - 10} more commits_`);
+            }
+            lines.push("");
+          }
         }
         lines.push("## Recent Versions");
         lines.push("| Version | Published |");
@@ -21491,6 +21595,53 @@ _...and ${detail.allVersions.length - 10} older versions_`);
     }
   );
   server.tool(
+    "get_plugin_changelog",
+    "Get commit history between two versions of a @akinon/pz-* plugin from Bitbucket",
+    {
+      name: external_exports.string().describe('Plugin name, e.g. "pz-masterpass-rest" or just "masterpass-rest"'),
+      from: external_exports.string().describe('Start version (exclusive), e.g. "1.5.0"'),
+      to: external_exports.string().describe('End version (inclusive), e.g. "1.6.0" or "2.0.0-rc.3"')
+    },
+    async ({ name, from, to }) => {
+      try {
+        const packageName = name.startsWith(`${NPM_SCOPE}/`) ? name : `${NPM_SCOPE}/${name.startsWith("pz-") ? name : "pz-" + name}`;
+        const result = await bitbucket.getChangelog(packageName, from, to);
+        if (result.commits.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: `No commits found between ${from} and ${to}. Tags may not exist in Bitbucket.`
+            }]
+          };
+        }
+        const lines = [
+          `# Changelog \u2014 ${packageName}`,
+          `**${from}** \u2192 **${to}** (${result.commits.length} commits)`,
+          ""
+        ];
+        const withTickets = result.commits.filter((c) => c.ticket);
+        const withoutTickets = result.commits.filter((c) => !c.ticket);
+        if (withTickets.length > 0) {
+          lines.push("## Linked Tickets");
+          for (const c of withTickets) {
+            lines.push(`- \`${c.ticket}\` ${c.message} \u2014 _${c.author}, ${c.date}_`);
+          }
+          lines.push("");
+        }
+        if (withoutTickets.length > 0) {
+          lines.push("## Other Changes");
+          for (const c of withoutTickets) {
+            lines.push(`- ${c.message} \u2014 _${c.author}, ${c.date}_`);
+          }
+          lines.push("");
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (error2) {
+        return errorResponse("get_plugin_changelog", error2);
+      }
+    }
+  );
+  server.tool(
     "get_plugin_versions",
     "Get all published versions of a specific @akinon/pz-* plugin with publish dates",
     {
@@ -21538,7 +21689,7 @@ function formatDate(iso) {
 }
 
 // src/index.ts
-var log2 = (level, msg) => {
+var log3 = (level, msg) => {
   process.stderr.write(
     JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), level, msg }) + "\n"
   );
@@ -21547,19 +21698,19 @@ async function main() {
   const server = createServer();
   const transport = new StdioServerTransport();
   process.on("SIGINT", async () => {
-    log2("info", "Shutting down (SIGINT)");
+    log3("info", "Shutting down (SIGINT)");
     await server.close();
     process.exit(0);
   });
   process.on("SIGTERM", async () => {
-    log2("info", "Shutting down (SIGTERM)");
+    log3("info", "Shutting down (SIGTERM)");
     await server.close();
     process.exit(0);
   });
   await server.connect(transport);
-  log2("info", "pz-next-registry MCP server started");
+  log3("info", "pz-next-registry MCP server started");
 }
 main().catch((error2) => {
-  log2("error", `Fatal: ${error2}`);
+  log3("error", `Fatal: ${error2}`);
   process.exit(1);
 });

@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { NpmRegistryClient, RegistryError } from './registry.js';
-import { CATEGORY_LABELS } from './constants.js';
+import { BitbucketClient } from './bitbucket.js';
+import { CATEGORY_LABELS, NPM_SCOPE } from './constants.js';
 import type { PluginCategory } from './types.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,10 +10,11 @@ import { join } from 'node:path';
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'pz-next-registry',
-    version: '1.0.0',
+    version: '1.5.0',
   });
 
   const registry = new NpmRegistryClient();
+  const bitbucket = new BitbucketClient();
 
   server.tool(
     'list_plugins',
@@ -107,7 +109,6 @@ export function createServer(): McpServer {
           .map((v) => `| ${v.version} | ${formatDate(v.publishedAt)} |`)
           .join('\n');
 
-        const deps = Object.entries(detail.dependencies);
         const peerDeps = Object.entries(detail.peerDependencies);
         const distTags = Object.entries(detail.distTags);
 
@@ -130,20 +131,28 @@ export function createServer(): McpServer {
           lines.push('');
         }
 
-        if (deps.length > 0) {
-          lines.push('## Dependencies');
-          for (const [dep, ver] of deps) {
-            lines.push(`- \`${dep}\`: ${ver}`);
-          }
-          lines.push('');
-        }
-
         if (peerDeps.length > 0) {
           lines.push('## Peer Dependencies');
           for (const [dep, ver] of peerDeps) {
             lines.push(`- \`${dep}\`: ${ver}`);
           }
           lines.push('');
+        }
+
+        const latestTag = detail.distTags['latest'];
+        if (latestTag) {
+          const changes = await bitbucket.getLatestChanges(detail.packageName, latestTag);
+          if (changes.length > 0) {
+            lines.push('## Latest Release Changes');
+            for (const c of changes.slice(0, 10)) {
+              const ticket = c.ticket ? ` \`${c.ticket}\`` : '';
+              lines.push(`- ${c.message}${ticket} — _${c.author}, ${c.date}_`);
+            }
+            if (changes.length > 10) {
+              lines.push(`_...and ${changes.length - 10} more commits_`);
+            }
+            lines.push('');
+          }
         }
 
         lines.push('## Recent Versions');
@@ -234,6 +243,69 @@ export function createServer(): McpServer {
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (error) {
         return errorResponse('check_updates', error);
+      }
+    }
+  );
+
+  server.tool(
+    'get_plugin_changelog',
+    'Get commit history between two versions of a @akinon/pz-* plugin from Bitbucket',
+    {
+      name: z
+        .string()
+        .describe('Plugin name, e.g. "pz-masterpass-rest" or just "masterpass-rest"'),
+      from: z
+        .string()
+        .describe('Start version (exclusive), e.g. "1.5.0"'),
+      to: z
+        .string()
+        .describe('End version (inclusive), e.g. "1.6.0" or "2.0.0-rc.3"'),
+    },
+    async ({ name, from, to }) => {
+      try {
+        const packageName = name.startsWith(`${NPM_SCOPE}/`)
+          ? name
+          : `${NPM_SCOPE}/${name.startsWith('pz-') ? name : 'pz-' + name}`;
+
+        const result = await bitbucket.getChangelog(packageName, from, to);
+
+        if (result.commits.length === 0) {
+          return {
+            content: [{
+              type: 'text',
+              text: `No commits found between ${from} and ${to}. Tags may not exist in Bitbucket.`,
+            }],
+          };
+        }
+
+        const lines = [
+          `# Changelog — ${packageName}`,
+          `**${from}** → **${to}** (${result.commits.length} commits)`,
+          '',
+        ];
+
+        const withTickets = result.commits.filter((c) => c.ticket);
+        const withoutTickets = result.commits.filter((c) => !c.ticket);
+
+        if (withTickets.length > 0) {
+          lines.push('## Linked Tickets');
+          for (const c of withTickets) {
+            lines.push(`- \`${c.ticket}\` ${c.message} — _${c.author}, ${c.date}_`);
+          }
+          lines.push('');
+        }
+
+        if (withoutTickets.length > 0) {
+          lines.push('## Other Changes');
+          for (const c of withoutTickets) {
+            lines.push(`- ${c.message} — _${c.author}, ${c.date}_`);
+          }
+          lines.push('');
+        }
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (error) {
+        return errorResponse('get_plugin_changelog', error);
       }
     }
   );
