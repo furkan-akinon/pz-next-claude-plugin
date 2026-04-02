@@ -5,11 +5,11 @@ description: List all available pz-* plugins grouped by category with live versi
 
 # Available pz-* Plugins
 
-Call the `list_plugins` MCP tool from the `pz-next-registry` server to fetch the current plugin list from the npm registry.
+You MUST use the `list_plugins` MCP tool to fetch the current plugin list from the npm registry. Do NOT use hardcoded data or search local files.
 
-If the user provides a category argument, pass it to the tool. Valid categories: `payment`, `bnpl`, `quick-checkout`, `shopping`, `business`, `utility`, `all`.
+Call `list_plugins` with category: "all"
 
-After displaying the results, suggest:
-- Use `/pz-next:install <plugin-name>` to install a plugin.
-- Use `/pz-next:info <plugin-name>` for detailed information.
-- Use `/pz-next:status` to see currently installed plugins.
+Present the returned data as-is. After displaying, suggest:
+- `/pz-next:install <plugin-name>` to install a plugin
+- `/pz-next:info <plugin-name>` for detailed information
+- `/pz-next:status` to see currently installed plugins

@@ -6,14 +6,10 @@ argument-hint: <plugin-name>
 
 # Plugin Info: "$ARGUMENTS"
 
-Call the `get_plugin_info` MCP tool from the `pz-next-registry` server with the plugin name "$ARGUMENTS".
+You MUST use the `get_plugin_info` MCP tool to fetch live data from the npm registry. Do NOT search local files or grep the codebase for plugin information.
 
-This returns: latest version, all published versions, dependencies, peer dependencies, category, and last publish date.
+Call `get_plugin_info` with name: "$ARGUMENTS"
 
-Additionally, check if the plugin is currently installed in this project:
-1. Check if `node_modules/@akinon/$ARGUMENTS` exists
-2. Check if the plugin is listed in `src/plugins.js`
-
-Present both the live npm data and the local installation status.
+Present the returned npm data (version, dependencies, peer dependencies, publish history).
 
 Then suggest: "Run `/pz-next:install $ARGUMENTS` to install and configure this plugin."
