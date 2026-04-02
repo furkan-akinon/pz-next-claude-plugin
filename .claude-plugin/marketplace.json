@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "pz-next-local",
+  "name": "pz-next-plugin",
   "description": "Local marketplace for Project Zero Next plugin",
   "owner": {
     "name": "furkan"
