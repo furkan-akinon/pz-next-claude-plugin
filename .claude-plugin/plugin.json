@@ -1,0 +1,5 @@
+{
+  "name": "pz-next",
+  "description": "Plugin management for Project Zero Next. Install, configure, and manage pz-* payment and feature plugins.",
+  "version": "1.0.0"
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "pz-next-local",
+  "description": "Local marketplace for Project Zero Next plugin",
+  "owner": {
+    "name": "furkan"
+  },
+  "plugins": [
+    {
+      "name": "pz-next",
+      "description": "Plugin management for Project Zero Next. Install, configure, and manage pz-* payment and feature plugins.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}
